@@ -1,0 +1,965 @@
+---
+title: "Family Formation in Europe: The Role of Family Policy Access and Government Spending"
+author: "Enzo Soares Gil, Siqi Dong, Miranda Gebhardt"
+format: pdf
+include-in-header: preamble.tex
+execute:
+  echo: false
+  warning: false
+  error: false
+  message: false
+editor: visual
+bibliography: References.bib
+---
+
+## Introduction
+
+```{r}
+#| output: false
+# All the packages used to be found here
+
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(haven)
+library(modelsummary)
+library(kableExtra)
+library(estimatr)
+library(janitor)
+library(survey)
+library(citr)
+library(ggplot2)
+library(here)
+library(readr)
+```
+
+```{r}
+#| output: false
+
+#-----------------------------------------------------------------------------------------
+# Data preperation  -----------------------------------------------------------------------
+
+# Importing Datasets
+
+# Wave 3 Cronos Make it Strong 
+
+# ADD the data with here package (you have downloaded our datafolder)
+df1 <- read_csv(here("Ess data", 
+                     "CRONOS-3 Theme - Make it Strong",
+                     "CRONOS-3 Theme - Make it Strong.csv"))
+
+# You can uncomment the following line to add your own path to the data instead
+
+# df1 <- read_csv("~/Documents/Datathon/Ess data/CRONOS-3 Theme - Make it Strong/CRONOS-3 Theme - Make it Strong.csv")
+# here path
+make_green_add <- read_rds(here("Ess data", 
+                                "merged_cronos"))
+
+# make_green_add <- read_rds("data/merged_cronos.rds")
+# make_green_add <- read_rds("~/Documents/Datathon/Ess data/merged_cronos") # this a merged file of different waves of CRONOS-3 with variables from themes other than the Strong theme. If you haven't downloaded the merged_cronos.rds file from us, you could also rebuild this by merging the CRONOS-3 themes.
+
+make_green_add <- 
+  make_green_add |>
+  select(idno, 
+    w4_responsibl_current_gen_reduc_cc_green,
+    w2_trust_gov_combat_cc_green,
+    w2_worried_climate_change_2_green,
+    w4_current_gen_eff_reduc_cc_green
+  )
+
+# df1 <- read_csv("data/CRONOS-3 Theme - Make it Strong.csv")
+
+# ESS Wave 10 + 11
+# add df2 with here ...
+df2 <- read_csv(here("Ess data", 
+                     "ESS10e03_3-ESS10SCe03_2-ESS11e04_1",
+                     "ESS10e03_3-ESS10SCe03_2-ESS11e04_1.csv"))
+# .. or change to your own filepaths
+#df2 <- read_csv("~/Documents/Datathon/Ess data/ESS10e03_3-ESS10SCe03_2-ESS11e04_1/ESS10e03_3-ESS10SCe03_2-ESS11e04_1.csv")
+
+# df2 <- read_csv("data/ESS10e03_3-ESS10SCe03_2-ESS11e04_1.csv")
+
+# Merge according to instructions from Cronos
+df <- inner_join(df1, df2, by = c("idno", "essround", "cntry", "mode"))
+
+df <- df |>  
+  left_join(make_green_add, by = "idno")
+
+
+# Common NA codes in the dataset will be used later 
+
+na_codes <- c(6, 7, 8, 9, 66, 77, 88, 99, 6666, 7777, 8888, 9999)
+
+# Some variables that we renamed for analysis, although not all are used in the final product
+
+df_renamed <- df |>
+  rename(importance_children = w4sq11,
+         importance_family = w4sq2, 
+         gov_should_spend_family = w5sq17_1,
+         responsible_support_family = w5sq20,
+         access_parental_leave = w5sq16,
+         parents_should_help_adult_children = w5sq11,
+         children_should_care_parents = w5sq12,
+         parents_should_get_job_more = w5sq8,
+         ever_had_child_in_hh = chldhhe,
+         access_childcare = w5sq15,
+         access_suitable_housing = w5sq14)
+# Variables we used in the model 
+
+used_vars <- c(
+  "importance_children",
+  "importance_family",
+  "gov_should_spend_family",
+  "responsible_support_family",
+  "access_parental_leave",
+  "parents_should_help_adult_children",
+  "children_should_care_parents",
+  "parents_should_get_job_more",
+  "ever_had_child_in_hh",
+  "gndr.x",
+  "access_childcare",
+  "access_suitable_housing",
+  "w4_responsibl_current_gen_reduc_cc_green",
+  "w2_trust_gov_combat_cc_green",
+  "w2_worried_climate_change_2_green",
+  "w4_current_gen_eff_reduc_cc_green"
+)
+# NA removal according to these variables
+df_clean <- df_renamed %>%
+  mutate(across(
+    all_of(used_vars),
+    ~ ifelse(. %in% na_codes, NA, .)
+  ))
+
+
+
+### NEW VARIABLES
+
+# To do add to M1 Miranda and model 2 enzo climate change kills babies model <- 
+# income, --- DONE 
+# rural vs. urban, ---- DONE
+# cntry, --- DONE
+# age, --- DONE 
+# politics (left/right), 
+# religiosity, 
+# gndr.x --- DONE
+
+
+# Income Variable -------------------------------------------------------------------------------------
+df_clean <- df_clean |>  
+  mutate( # Non-response codes to NA
+    hinctnta.x = na_if(hinctnta.x, 77),
+    hinctnta.x = na_if(hinctnta.x, 88),
+    hinctnta.x = na_if(hinctnta.x, 99),
+    income_terciles = case_when(
+      hinctnta.x %in% 1:3  ~ "Low",
+      hinctnta.x %in% 4:7  ~ "Middle",     
+      hinctnta.x %in% 8:10 ~ "High",  
+      TRUE ~ NA_character_
+    ),
+    income_terciles = factor(income_terciles, levels = c("Low", "Middle", "High"))
+  )
+
+# NEW VARIABLE: income_terciles
+
+# Left-Right Scale  -----------------------------------------------------------------------------------
+
+df_clean <- df_clean |>  
+  mutate( # Non-response codes to NA
+    lrscale = na_if(lrscale, 77),
+    lrscale = na_if(lrscale, 88),
+    lrscale = na_if(lrscale, 99),
+    left_right = case_when(
+      lrscale %in% 1:3 ~ "Left",
+      lrscale %in% 4:6 ~ "Center",
+      lrscale %in% 7:10 ~ "Right",
+      TRUE ~ NA_character_
+    ), 
+    left_right = factor(left_right, levels = c("Left", "Center", "Right"))
+  )
+
+# NEW VARIABLE: left_right
+
+# Religion  -------------------------------------------------------------------------------------------
+
+df_clean <- df_clean |>  
+  mutate( 
+    rlgblg = na_if(rlgblg, 7), 
+    rlgblg = na_if(rlgblg, 8),
+    rlgblg = na_if(rlgblg, 9),
+    religion = rlgblg # recoding for easier reading 
+  )
+
+
+# Urban Rural Variable --------------------------------------------------------------------------------------------------------------------------------------------
+
+# here we recode the variable domicil in ESS to be a binary rural/uran category for this purpose we decided that responses 1- A big city, 2 - Suburbs or outskirts of a big city are urban and the other responses, 3- Town or Small city, 4 - Country Village and 5 - Farm or home in countryside are urban. 
+
+
+df_clean$rural_binary <- ifelse(df$domicil %in% c(7, 8, 9), NA, # Set NA to make later steps easier 
+                   ifelse(df$domicil %in% c(4, 5), 1, 0))
+
+
+# Family status variables-----------------------------------------------------------------
+
+# Adding some family status indicator variables based on relationship with household members' (rshipa2 - rshipa15) and the age of the household members (yrbrn2 - yrbrn15). In this step we want to identify those households with children and the number of children
+df <- df_clean %>% mutate(across(where(is.labelled), as.integer))
+
+# STEP 1  – auto-detecting column names
+
+# Household grid: gndr2, gndr3, ...  and  rshipa2, rshipa3, ...
+get_grid_cols <- function(data, prefix) {
+  cols <- names(data)[grepl(paste0("^", prefix, "\\d+$"), names(data))]
+  cols[order(as.integer(gsub(prefix, "", cols)))]
+}
+ 
+gndr_cols   <- get_grid_cols(df, "gndr")    # household members' genders
+rshipa_cols <- get_grid_cols(df, "rshipa")  # household members' relationships
+ 
+# Keep only slot indices present in both
+shared_idx  <- intersect(gsub("gndr",   "", gndr_cols),
+                         gsub("rshipa", "", rshipa_cols))
+gndr_cols   <- paste0("gndr",   shared_idx)
+rshipa_cols <- paste0("rshipa", shared_idx)
+message("Grid slots found: ", paste(shared_idx, collapse = ", "))
+ 
+# gndr.x = respondent gender (suffixed by merge); gndr.y is the duplicate
+# from the second dataset and can be ignored.
+resp_gndr_col <- "gndr.x"
+
+# identical(df$gndr_ess11, df$gndr_ess11)
+
+message("Respondent gender column: ", resp_gndr_col)
+
+# STEP 2  – building variables
+
+# rshipa codes:
+#   1 = Husband/wife/partner
+#   2 = Son/daughter/step/adopted/foster
+#   66 / 77 / 88 / 99 = system missing (excluded via na.rm / != comparisons)
+
+# gndr codes:
+#   1 = Male  |  2 = Female  |  9 = No answer (-> NA)
+
+ 
+# Capture as plain strings so they are safely visible inside rowwise {}
+.resp_col  <- resp_gndr_col
+.has_chldh <- "chldhhe" %in% names(df)
+ 
+# Build yrbrn column names parallel to rshipa_cols 
+# Assumes naming convention yrbrn2, yrbrn3, … matching rshipa2, rshipa3, …
+yrbrn_cols <- stringr::str_replace(rshipa_cols, "^rshipa", "yrbrn")
+na_codes <- c(6, 7, 8, 9, 66, 77, 88, 99, 6666, 7777, 8888, 9999)
+dfmi <- df %>%
+  rowwise() %>%
+  mutate(
+
+    # ── Task 1a: count of children in household ─────────────────────────────
+    n_children_hh = sum(c_across(all_of(rshipa_cols)) == 2, na.rm = TRUE),
+
+    # ── Task 1b: binary has-children flag ────────────────────────────────────
+    has_children_hh = (n_children_hh > 0),
+
+    # ── Task 1c: ever had children (from chldhhe, if present) ───────────────
+    ever_had_children = {
+      if (.has_chldh) {
+        v <- .data[["chldhhe"]]
+        case_when(v == 1 ~ TRUE, v == 2 ~ FALSE, TRUE ~ NA)
+      } else {
+        NA
+      }
+    },
+
+    # ── Task 1d: count of co-resident children under 18 ─────────────────────
+    # Reference year: 2020 for ESS10, 2023 for ESS11.
+    # yrbrn values matching na_codes are treated as missing before age calc.
+    n_children_u18_hh = {
+      ref_year <- dplyr::case_when(
+        essround == 10 ~ 2020L,
+        essround == 11 ~ 2023L,
+        TRUE           ~ NA_integer_
+      )
+
+      if (!is.na(ref_year)) {
+        rshipa_vals <- c_across(all_of(rshipa_cols))
+        yrbrn_vals  <- c_across(all_of(yrbrn_cols))
+
+        # Recode NA codes to NA
+        yrbrn_clean <- ifelse(yrbrn_vals %in% na_codes, NA_real_, as.numeric(yrbrn_vals))
+
+        age_vals <- ref_year - yrbrn_clean   # NA if birth year is missing
+
+        # Child slot: rshipa == 2, valid age, and age < 18
+        sum(rshipa_vals == 2 & !is.na(age_vals) & age_vals < 18, na.rm = TRUE)
+      } else {
+        NA_integer_
+      }
+    }
+
+  ) %>%
+  ungroup()
+
+# Binary variable for if there are any of respondents children under 18 in household 
+dfmi <- dfmi |>
+  mutate(has_children_u18 = ifelse(n_children_u18_hh == 0, 0, 1))
+ 
+# This is an overview of some the created variables, so that we can confirm it seems roughly right, which it does.
+message("\n── Variable summary ──")
+message("n rows:               ", nrow(dfmi))
+message("has_children_hh=TRUE: ", sum(dfmi$n_children_u18_hh,     na.rm = TRUE))
+
+ 
+if (.has_chldh) {
+  message("ever_had_children=TRUE: ", sum(dfmi$n_children_u18_hh, na.rm = TRUE))
+}
+ 
+message("\nn_children_hh distribution:")
+print(table(dfmi$n_children_u18_hh, useNA = "ifany"))
+print(table(dfmi$has_children_u18, useNA = "ifany"))
+
+
+# Surveyweights------------------------------------------------------------------------------------------------------------------------------------
+
+# Source from ESS weight guide <- insert proper source citation here and in appendix
+
+```
+
+The demographic question is one of the most pressing questions in Europe. The phenomena of shrinking birthrates and an ageing population has been well documented scientifically for decades and remains a point of focus for policymakers [@mateos-planasDemographicTransitionEurope2002; @JRC137492]. An OECD meta-level analysis also shows that there is a positive relations between childcare and parental leave spending with brithrates [@FertilityEmploymentFamily2023]. The goal of this analysis is to focus on the anxieties and values related to family formation and perceived access to childcare, parental leave and suitable housing for families in relation to support for government spending on families. Furthermore, one aim is to expose barriers that may play a role in preventing family well being and formation. Based on the results of statistical analysis, their interpretation and supportive literature, we propose policy recommendations.
+
+# Data Description
+
+The main data source in this analysis is the Cross-National Online Survey 3 (CRONOS-3) Project, with a focus on the "Make it Strong" theme. The CRONOS-3 Survey is conducted cross nationality in 11 countries in Europe: Austria, Belgium, Czechia, Finland, France, Hungary, Iceland, Poland, Portugal, Slovenia, and the United Kingdom. It aims to provide additional data to the European Social Survey (ESS) and recruits participants that have already been part of the former. The survey focuses on 5 larger themes encompassing health, digitality , environmental issues and youth. Here we will focus on the part of the "Make it Strong" theme that regards family values. To supplement our data on an important issue when it comes to family formation, we also included a variable from the "Make it Green" [@europeansocialsurveyeuropeanresearchinfrastructureessericCRONOS3Wave12025; @europeansocialsurveyeuropeanresearchinfrastructureessericCRONOS3Wave22025; @europeansocialsurveyeuropeanresearchinfrastructureessericCRONOS3Wave32025; @europeansocialsurveyeuropeanresearchinfrastructureessericCRONOS3Wave42025; @europeansocialsurveyeuropeanresearchinfrastructureessericCRONOS3Wave52025].The analysis is further supplemented with the added data from the ESS Round 10 [@europeansocialsurveyericessericEuropeanSocialSurvey2022a; @europeansocialsurveyeuropeanresearchinfrastructureessericESS10IntegratedFile2025] and ESS round 11 [@europeansocialsurveyeuropeanresearchinfrastructureessericESS11IntegratedFile2026]. All the statistics in this analysis are corrected for the provided survey weight in CRONOS-3, whereby the weight for the wave with the largest corresponding population was used.
+
+The most important variable we created in this context is a new variable that identifies whether people have a child (under 18) living in their household at the time of the ESS round corresponding to the survey participant. The variables indicating relationship to another household member and age of household member from the ESS are used for this (rshipa2-rshipa15 and yrbrn2-yrbrn15). Since we are also interested in the perception of those that do not have children, living with them but are possible parents we also sometimes limit the age range from 25-40 to include those more likely to become parents (some might already be parents who do not live with their children) in these years.
+
+Our full code can be found at: <https://github.com/Ravenscraven/Datathon>
+
+## Research Questions and Analysis
+
+**RQ1 :**
+
+How do respondents with children under 18 living at home differ from those living without children in the age group 25-40 in their perception of access to services, such as childcare, parental leave and housing?
+
+```{r, include=FALSE}
+#| ouput: false
+#| 
+# Decriptive and regression analysis with survey weight for RQ 1: 
+
+# Here filter is applied to the data to exclude NA entries on target variables and create subset with the desired age group
+dfmi_filtered_w4w_age <- dfmi |>
+  filter(
+    !is.na(w4weight), # w4weight because wave 4 is the largest population for variables used in this analysis 
+    !is.na(access_childcare),
+    !is.na(has_children_u18),
+    !is.na(income_terciles),
+    !is.na(cntry),
+    !is.na(rural_binary),
+    !is.na(lrscale),
+    !is.na(gndr.x),
+    age >= 25 & age <= 40
+  )
+# Defining survey design for analysis
+d <- svydesign(
+  ids = ~1,
+  weights = ~w4weight,
+  data = dfmi_filtered_w4w_age
+)
+
+dfmi$ur
+# Means by parent versus non parents
+svyby(~access_childcare, ~has_children_u18, d, svymean, na.rm=TRUE) # for accessing childcare
+svyby(~access_parental_leave, ~has_children_u18, d, svymean, na.rm=TRUE) # for accessing parental leave
+svyby(~access_suitable_housing, ~has_children_u18, d, svymean, na.rm=TRUE) # for acessing suitable housing
+
+# Means by parents versus non parents and gender of respondent
+svyby(~access_childcare + access_parental_leave + access_suitable_housing,
+      ~has_children_u18 + gndr.x,
+      d, svymean, na.rm=TRUE) # for all three access variables 
+
+# Simple regression model for access childcare
+
+m1_childcare <- svyglm(
+  access_childcare ~ has_children_u18 + gndr.x + rural_binary,
+  design = d
+)
+# Simple model for access parental leave
+m1_leave <- svyglm(
+  access_parental_leave ~ has_children_u18 + gndr.x + rural_binary,
+  design = d
+)
+
+# Simple model for access housing
+m1_housing <- svyglm(
+  access_suitable_housing ~ has_children_u18 + gndr.x + rural_binary,
+  design = d
+)
+
+# Complex model childcare
+m2_childcare <- svyglm(
+  access_childcare ~ has_children_u18 + gndr.x + rural_binary + cntry + income_terciles + lrscale,
+  design = d
+)
+
+# Complex model parental leave
+m2_leave <- svyglm(
+  access_parental_leave ~ has_children_u18 + gndr.x + rural_binary + cntry + income_terciles + lrscale,
+  design = d
+)
+
+# Complex model housing
+m2_housing <- svyglm(
+  access_suitable_housing ~ has_children_u18 + gndr.x + rural_binary + cntry + income_terciles + lrscale,
+  design = d
+)
+
+```
+
+```{r}
+# Graph for RQ 1 ----------------------------------------------------------
+#| fig-width: 6        # width in inches (default 7)
+#| fig-height: 3.5     # height in inches (default 5)
+#| fig-align: center
+#| out-width: "80%"    # scale output size
+
+means_all <- svyby(~access_childcare + access_parental_leave + access_suitable_housing,
+                   ~has_children_u18,
+                   d, svymean, na.rm=TRUE)
+
+means_long <- as.data.frame(means_all) |>
+  pivot_longer(cols = starts_with("access"),
+               names_to = "variable",
+               values_to = "mean")
+
+ggplot(means_long, aes(x = variable, y = mean,
+                       fill = factor(has_children_u18))) +
+  geom_col(position = position_dodge(width = 0.9)) +
+  geom_text(aes(label = round(mean, 2)),
+            position = position_dodge(width = 0.9),
+            vjust = -0.3,
+            size = 3) +
+  scale_y_continuous(
+    breaks = 1:4,
+    labels = c("Definitely not",
+               "Probably not",
+               "Probably yes",
+               "Definitely yes")
+  ) +
+  scale_x_discrete(labels = c(          # shorten x labels
+    "access_childcare" = "Childcare",
+    "access_parental_leave" = "Parental Leave",
+    "access_suitable_housing" = "Housing"
+  )) +
+  coord_cartesian(ylim = c(1, 4)) +
+  labs(x = "Access type",
+       y = "Mean response",
+       fill = "Has children",
+       title = "Graph 1 : Access to Family Policies") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9),        # shrink all text
+    axis.text = element_text(size = 8),   # shrink axis text
+    legend.text = element_text(size = 8), # shrink legend
+    plot.title = element_text(size = 10)  # shrink title
+  )
+
+```
+
+As to the question, whether they would be able to access adequate childcare if they had another child in the next three years, live-in parents report a mean of 2.73, and others report a mean of 2.63. Therefore, parents report slightly better access; however, the difference is small. The inverse is the case for the same question but aimed at parental leave: those with children living in the report had lower access at a mean of 2.4 versus others at a mean of 2.59. Similarly, for housing, live-in parents report a mean of 2.7 compared to a mean of 2.81 for others. Overall it has to be noted that the difference between non-parents and parents are relatively small (see Graph 1). All these differences are very small, suggesting a similar perception of access to family-oriented policy among live-in parents and others. Overall, access to childcare is perceived as lowest in Portugal and highest in Austria. Access to parental leave is particularly low in France, Great Britain, and Portugal and highest in Iceland, Poland, and Finland. Finally, access to housing is lowest in Hungary, Portugal, and Slovenia and highest in Iceland, Austria, and Belgium (see Appendices entry 1).
+
+```{r}
+# RQ 1: Table -------------------------------------------------------------
+
+# Storing the svyby result
+means_gender_parent <- svyby(
+  ~access_childcare + access_parental_leave + access_suitable_housing,
+  ~has_children_u18 + gndr.x,
+  d, svymean, na.rm = TRUE
+)
+
+# Table 
+means_gender_parent |>
+  as.data.frame() |>
+  mutate(
+    has_children_u18 = factor(has_children_u18, 
+                               labels = c("No Children", "Has Children")),
+    gndr.x = factor(gndr.x, 
+                    labels = c("Male", "Female"))
+  ) |>
+  select(has_children_u18, gndr.x,                  # keep main cols
+         access_childcare, 
+         access_parental_leave, 
+         access_suitable_housing) |>
+  rename(
+    "Has Children" = has_children_u18,
+    "Gender" = gndr.x,
+    "Childcare" = access_childcare,
+    "Parental Leave" = access_parental_leave,
+    "Housing" = access_suitable_housing
+  ) |>
+  mutate(across(where(is.numeric), ~round(., 2))) |>  # round to 2 decimals
+  kable(
+    caption = "Table 1: Mean Access to Family Policies by Parent Status and Gender",
+    booktabs = TRUE
+  ) |>
+  kable_styling(
+    font_size = 10,
+    latex_options = c("hold_position")
+  ) |>
+  collapse_rows(columns = 1,                          # merge repeated rows
+                valign = "middle")
+```
+
+On Table 1 we can see the means for each category of access broken down by live-in parent and other status and gender. This reveals two interesting dynamics in the data: first, men overall report higher access across all policies. Secondly, fathers report much lower parental leave access.
+
+Additionally, we also include an OLS regression using svyglm() from the R survey package, incorporating weights for the CRONOS-3 wave. Standard errors are design based (see Appendices entry 2). For each access variable we include a simple model and a complex model. Again the analysis is limited to ages 25-40.
+
+Simple Model:
+
+$$Y_{ij} = \beta_0 + \beta_1 \text{Children}_{ij} + \beta_2 \text{Gender}_{ij} + \beta_3 \text{Rural}_{ij} + \varepsilon_{ij}$$
+
+Complex Model:
+
+$$Y_{ij} = \beta_0 + \beta_1 \text{Children}_{ij} + \beta_2 \text{Gender}_{ij} + \beta_3 \text{Rural}_{ij} + \beta_4 \text{Country}_{j} + \beta_5 \text{Income}_{ij} + \beta_6 \text{Ideology}_{ij} + \varepsilon_{ij}$$
+
+Where $Y_{ij}$ is perceived access to childcare, parental leave, or housing for individual $i$ in country $j$; $\text{Country}_j$ is a vector of country fixed effects; $\text{Income}_{ij}$ is income tercile; $\text{Ideology}_{ij}$ is left-right self-placement; and $\varepsilon_{ij}$ is the survey-weighted error term.
+
+For the purpose of this paper, we are going to summarize the most important results from all models.
+
+Overall, all 6 models show that gender is negative and significant, showing that women consistently score their access lower than men. Possible explanations for this trend could be that women often carry more direct responsibility for childcare and therefore are confronted more often with access. This might mean that they faced more difficulties or experienced more thoughts about not having access. This result is consistently significant and fairly large across access categories and model type.
+
+On the other hand, having children in the household is mostly not significant, except in the complex parental leave model, where it has a significant negative effect. This means that live-in parents perceive their access to parental leave as worse than others in this model.
+
+In the complex models, income has a significant positive effect on all access categories, with the strongest effect on housing.
+
+The country fixed effects are quite varied and align with observations from Appendix entry 1. They do suggest strong cross-national differences (especially on parental leave). This means access perception is highly country-dependent, suggesting institutional and policy differences across countries play an important role.
+
+Rural-urban divide and political orientation do not show significance as predictors in any model.
+
+In summary, these results indicate that perceived access to childcare, housing and parental leave within the next three years for a new child, is shaped by structural and contextual factors. Political orientation or already having a child living within the household do not play a major role. Gender and income emerge as important predictors, with woman and lower-income individuals reporting lower access across all domains. Women might be more likely to recognize or experience barriers in accessing family policies. Strong cross-national differences highlight the importance of institutions and national welfare in regards to perceived accessibility. The answer to research question one is therefore that there is no high difference between live-in parents and others in the age group 25-40 for access. However, noticable differences emerge on the country, gender and income level.
+
+**RQ2 :**
+
+How do parents (living with their children) perceive differences in policy support for families by the government compared to non (live in) parents ?
+
+Graph visualization and maybe some other things + age group for people who would have capability to have children
+
+```{r, include=FALSE}
+#| ouput: false
+dfmi_filtered_spend <- dfmi |>
+  filter(
+    !is.na(w4weight),
+    !is.na(gov_should_spend_family),
+    !is.na(has_children_u18),
+    !is.na(gndr.x),
+    age >= 25 & age <= 45,
+    !gov_should_spend_family %in% c(6, 7, 8, 9),
+    has_children_u18 %in% c(0, 1) 
+  )
+
+d_spend <- svydesign(
+  ids = ~1,
+  weights = ~w4weight,
+  data = dfmi_filtered_spend
+)
+
+svyby(
+  ~gov_should_spend_family,
+  ~has_children_u18,
+  d_spend,
+  svymean,
+  na.rm = TRUE
+)
+svyby(
+  ~gov_should_spend_family,
+  ~has_children_u18 + gndr.x,
+  d_spend,
+  svymean,
+  na.rm = TRUE
+)
+
+svyby(
+  ~factor(gov_should_spend_family),
+  ~has_children_u18,
+  d_spend,
+  svymean,
+  na.rm = TRUE
+)
+```
+
+```{r}
+#| label: fig-spend_plot
+#| fig-cap: "Support for government spending on family by living with children under 18 and gender (ages 25-45)"
+
+plot_data <- svyby(
+  ~gov_should_spend_family,
+  ~has_children_u18 + gndr.x,
+  d_spend,
+  svymean,
+  na.rm = TRUE
+) |>
+  as.data.frame()
+
+plot_data$has_children_u18 <- factor(
+  plot_data$has_children_u18,
+  labels = c("No children", "Has children")
+)
+
+plot_data$gndr.x <- factor(
+  plot_data$gndr.x,
+  labels = c("Male", "Female")
+)
+
+ggplot(plot_data, aes(
+  x = factor(has_children_u18),
+  y = gov_should_spend_family,
+  fill = factor(gndr.x)
+)) +
+  geom_col(position = position_dodge(width = 0.9)) +
+  geom_errorbar(
+    aes(
+      ymin = gov_should_spend_family - se,
+      ymax = gov_should_spend_family + se
+    ),
+    width = 0.2,
+    position = position_dodge(width = 0.9)
+  ) +
+  labs(
+    x = "Has children under 18",
+    y = "In favor of government spending on family (mean)",
+    fill = "Gender"
+  ) +
+  theme_minimal()
+```
+
+```{r, include=FALSE}
+#| ouput: false
+# Significance test
+svyttest(
+  gov_should_spend_family ~ has_children_u18,
+  design = subset(d_spend, gndr.x == 1)
+)
+
+# Subset: women
+svyttest(
+  gov_should_spend_family ~ has_children_u18,
+  design = subset(d_spend, gndr.x == 2)
+)
+
+svyglm(
+  gov_should_spend_family ~ interaction(has_children_u18, gndr.x),
+  design = d_spend
+)
+# Non-parametric alternative 
+svyranktest(
+  gov_should_spend_family ~ has_children_u18,
+  design = d_spend
+)
+```
+
+@fig-spend_plot shows the mean support for government spending on family differentiated by whether the respondents have children under 18 living in their household and gender. By comparing women with children living at home and women without children at home we can see a statistically significant difference in support for government spending on family issues. The same can be said when comparing men. However, gendered differnces do not occur within the group of people with children at home or not.
+
+The results suggest that parents on the macro scale seem to agree similarly on the issue of subsidies for families. Although care work or income-differences are not directly measured here, parents seem to understand themselves as a unit that can be alimented by the government. Thus, gender doesn't play a significant role here, although women's support are slightly higher. Complementary, parents without children living at home anymore might be more likely to be occupied by different issues, as the every-day challenges of having kids at home is not apparent anymore. "Active" parents might be considered more aware of the needs for families and an important group to listen to when trying to aim policies at families.
+
+**RQ3 (Regression):**
+
+What individual and structural factors predict support for government spending on family and policy?
+
+How does living with children moderate this relationship?
+
+```{r, include=FALSE}
+#| ouput: false
+# MODEL 3 with consecutively added variables 
+# Since Model 3 
+ess_design  <- svydesign(
+  ids = ~1,
+  weights = ~w2weight,
+  data = dfmi |> filter(!is.na(w2weight))
+)
+
+# With income_terciles
+model_1 <- svyglm(
+  gov_should_spend_family ~ 
+    importance_children +
+    importance_family +
+    responsible_support_family +
+    parents_should_help_adult_children +
+    children_should_care_parents +
+    parents_should_get_job_more +
+    ever_had_child_in_hh +
+    gndr.x +
+    access_childcare +
+    access_parental_leave +
+    access_suitable_housing + 
+    income_terciles, 
+  design = ess_design
+  )
+
+summary(model_1)
+
+# With left_right
+
+model_2 <- svyglm(
+  gov_should_spend_family ~ 
+    importance_children +
+    importance_family +
+    responsible_support_family +
+    parents_should_help_adult_children +
+    children_should_care_parents +
+    parents_should_get_job_more +
+    ever_had_child_in_hh +
+    gndr.x +
+    access_childcare +
+    access_parental_leave +
+    access_suitable_housing + 
+    income_terciles + 
+    left_right, 
+  design = ess_design
+)
+summary(model_2)
+
+# With Religion
+
+model_3 <- svyglm(
+  gov_should_spend_family ~ 
+    importance_children +
+    importance_family +
+    responsible_support_family +
+    parents_should_help_adult_children +
+    children_should_care_parents +
+    parents_should_get_job_more +
+    ever_had_child_in_hh +
+    gndr.x +
+    access_childcare +
+    access_parental_leave +
+    access_suitable_housing + 
+    income_terciles + 
+    left_right + 
+    religion, 
+  design = ess_design
+)
+
+summary(model_3)
+
+# With Make it Green
+model_4 <- svyglm(
+  gov_should_spend_family ~
+    importance_children +
+    importance_family +
+    responsible_support_family +
+    parents_should_help_adult_children +
+    children_should_care_parents +
+    parents_should_get_job_more +
+    ever_had_child_in_hh +
+    gndr.x +
+    access_childcare +
+    access_parental_leave +
+    access_suitable_housing +
+    income_terciles +
+    left_right +
+    religion +
+    w4_responsibl_current_gen_reduc_cc_green +
+    w2_trust_gov_combat_cc_green +
+    w2_worried_climate_change_2_green +
+    w4_current_gen_eff_reduc_cc_green,
+  design = ess_design
+)
+
+summary(model_4)
+
+
+# With countries
+model_5 <- svyglm(
+  gov_should_spend_family ~ 
+    importance_children +
+    importance_family +
+    responsible_support_family +
+    parents_should_help_adult_children +
+    children_should_care_parents +
+    parents_should_get_job_more +
+    ever_had_child_in_hh +
+    gndr.x +
+    access_childcare +
+    access_parental_leave +
+    access_suitable_housing + 
+    income_terciles + 
+    left_right + 
+    religion + 
+    w4_responsibl_current_gen_reduc_cc_green +
+    w2_trust_gov_combat_cc_green +
+    w2_worried_climate_change_2_green +
+    w4_current_gen_eff_reduc_cc_green +
+    factor(cntry), 
+  design = ess_design
+)
+
+summary(model_5)
+
+```
+
+```{r}
+#| label: tbl-regressions_weighted
+#| tbl-cap: "Regression Models"
+
+modelsummary(
+  list(
+    "Model 1" = model_1,
+    "Model 2" = model_2,
+    "Model 3" = model_3,
+    "Model 4" = model_4,
+    "Model 5" = model_5
+  ),
+  statistic = "conf.int",
+  stars = FALSE,
+  output = "kableExtra",
+  gof_omit = "BIC|Log", 
+  fmt = 2,
+  coef_rename = c(
+    "importance_children" = "Importance of children",
+    "importance_family" = "Importance of family",
+    "responsible_support_family" = "Responsibility to support family",
+    "parents_should_help_adult_children" = "Parents should help adult children",
+    "children_should_care_parents" = "Children should care for parents",
+    "parents_should_get_job_more" = "Parents should get job more",
+    "ever_had_child_in_hh" = "Ever had child in household",
+    "gndr.x" = "Gender",
+    "access_childcare" = "Access to childcare",
+    "access_parental_leave" = "Access to parental leave",
+    "access_suitable_housing" = "Access to suitable housing",
+    "income_tercilesMiddle" = "Income: Middle vs Low",
+    "income_tercilesHigh" = "Income: High vs Low",
+    "left_rightCenter" = "Political orientation: Center vs Left",
+    "left_rightRight" = "Political orientation: Right vs Left",
+    "religion" = "Religion: Yes vs No",
+    "w4_responsibl_current_gen_reduc_cc_green" = "Responsibility to reduce climate change",
+    "w2_trust_gov_combat_cc_green" = "Trust in government on climate change",
+    "w2_worried_climate_change_2_green" = "Worried about climate change",
+    "w4_current_gen_eff_reduc_cc_green" = "Effectiveness of current gen. on climate change",
+    "factor(cntry)BE" = "Country: Belgium vs Austria",
+    "factor(cntry)CZ" = "Country: Czechia vs Austria",
+    "factor(cntry)FI" = "Country: Finland vs Austria",
+    "factor(cntry)FR" = "Country: France vs Austria",
+    "factor(cntry)GB" = "Country: Great Britain vs Austria",
+    "factor(cntry)HU" = "Country: Hungary vs Austria",
+    "factor(cntry)IS" = "Country: Iceland vs Austria",
+    "factor(cntry)PL" = "Country: Poland vs Austria",
+    "factor(cntry)PT" = "Country: Portugal vs Austria",
+    "factor(cntry)SI" = "Country: Slovenia vs Austria"
+  ),
+  notes = list("Confidence intervals (95%) in brackets.")
+) |>
+  kable_styling(
+    font_size = 7,
+    latex_options = c("hold_position", "scale_down")
+  )
+```
+
+*What individual and structural factors predict support for government spending on family and policy?*
+
+*How does living with children moderate this relationship?*
+
+*DESCRIPTION*
+
+@tbl-regressions_weighted shows the results of 5 consecutively adjusted survey-weighted linear regressions which were conducted with the **survey** package in R. Most noticingly the importance of children is a significant predictor of support for government spending on families across almost all models. Only Model 5 which includes controls for countries lifts the significant association. Similar to signified importance of children, importance of family seems to predict an increased support for government spending on family, although its relation is not as robust as the previous question. The results also show that respondents in favor of prioritizing parents on the job market are also more likely to entertain a demand for family subsidies. This relation however, is only apparent in the first three models. The scales of the previously mentioned variables are inverted semantically which is why coefficients are negative.
+
+The strongest predictor of all and across models is ever having had children living in the respondents household. In accordance with prior analyses, the presence of children increases the support for government spending. The regression models also reconfirm that gender is neither an important individual or structural marker in the dependent variable.
+
+Surprisingly, access to childcare and parental leave are not performing well in the models. However, having access to suitable housing consistently predicts negative support of family spending from the government. Which could mean that higher income households could follow the same association. Indeed, Models 1, 2 and 3 predict a significant difference in lower support for government spending on families for individuals in the middle tercile income group compared to the lower tercile. Surprisingly though, the difference between low and high income terciles is not to be found in any model.
+
+Exceeding the baseline model, political orientation is shows predictive power on prioritizing family spending. In particular, being more right leaning is associated with a stronger support for family spending compared to left-leaning respondents. Culturally, this is also religiously suggested, as being religious is positively associated with higher support for government spending on family too.This association is shown as important for Model 4 and 5. All included variables form the Make it Green pillar are not significant predictors across models.
+
+The final Model 5 which controls for country specific effects, shows that they mostly do not play a significant role in comparison to Austria as a reference. Two exceptions, namely Czech Republic and Finland have a significantly negative association with support for government spending on family compared to Austria.
+
+The goodness-of-fit metrics show a conitinous improvement across models, although from Model 4 on the inclusion of the *ke it Green* are responsible for a substantial reduction in the number of observations. The $R^2_{adj}$ reaches in Model 5 a maximum of 0.091 meaning that the model explains roughly 9% of the variance in support for government spending on family in the ESS and CRONOS-3 sample. Also, the RMSE showcases a rather same prediction error across all models and the AIC improves over across all models too.
+
+*INTERPRETATION* This analysis re-emphasizes the importance of "active" families and households that are currently occupied with children. Variables like importance of family or children, having had children in the households composition show sufficient predictive power for increased government spending on families across models, even with small or progressively neglectable effect sizes. This is not surprising. Yet, there seems to be an income driven distinction taking place between the middle income tercile in comparison to the lowest. Those who have the means to suitable housing for their families are less likely to support family alimentation. This could be because they are less likely to need government support for their family and may perhaps see the government as an unnecessary middleman. The distinction between middle and low income terciles could be a result of rhetoric addressing relative social justice in terms of living standard and work performance every individual or family contributes to the economy. Incomprehensibly, the middle tercile opposition might be of self-harm as they might profit with the low income tercile the most from family spending, whereas the top tercile might be on the same side as the low tercile but not really being dependent on family bonuses. Perhaps, work-ethic seems to play a role in support of family spending, as people in favor of prioritizing parents on the job markets can be read as a wish to a) have a more family friendly labor market and b) a state-independent source of income to sustain family life. It is however, unclear how many of the sample really think like this. Moreover, family spending from the government seems to enjoy specific support from right leaning and religious respondents which could be a result of the cultural and political context in which family life is embedded. The fact that the Make it Green variables do not show any significant association with support for family spending could be an indication that the climate change related anxieties and values are not directly related to family values and support for family policies. Given, that Finland and Czech Republic are significantly less supportive of family spending from the government compared to Austria, this is the most puzzling result. Finland and Czech Republic being less supportive of family is counter intuitive given the fact that it is known for its family friendly policies. However, this could be a result of a general normalization of family support in Finland as to why people might not feel a need to increase family spending.
+
+To conclude, living with children and running an "active" family seems to be beneficial for support of family government subsidies. Also, conservative, right-leaning ideologies might help with that and provide a cultural context in which family life is appreciated and supported -- both individually through morals and institutionally through spending. Government spending however, is limited by middle tercile income and access to suitable housing which leaves open a window for policy intervention to suppport middle income families despite their distinction to lower income families.
+
+## Limitations
+
+As this analysis aims to be comprehensive we ought to acknowledge some limitations that come with it. First, concerning the choice of variables we selected, we had to compromise on the number of variables from across pillars from the CRONOS-3 data set and the ESS data set. Also, choosing specific variables that carry important concepts to us where we thought that they could have an association with our dependent variables. Having a left-right scale as a control was nice but regarding the different political cultures within the European countries the scale is most definitely not accurate. Thus, this variable but also others must be interpreted with reservation. Especially concerning the regression analyses we've conducted.
+
+This leads to the second point, namely the goodness-of-fits of our analyses. Overall, the $R^2_{adj}$ are relatively small, although improving across models. However, those are most likely caused by drastic drops in numbers of observations, especially in the analysis of RQ3. The more we include, the more we lose observations, as seen with the Make it Green variables. But not only missing values may have posed a problem, but also variables that contribute far more in explaining family formation and support for family policies. For example, we did not include variables that directly measure care work or time spent with children, which could be a more direct measure of "active" family life. Also, we did not include any measures of social norms or cultural attitudes towards family life, which could also play a significant role in shaping support for family policies -- only touching them superficially with items measuring religiousness and political orientation.
+
+Finally, working within a time constraint and with a large data set posed a challenge that comes with natural caveats, spanning unity in formatting, missing values, and the sheer number of variables that could be included. We had to make choices on which analyses we try and how complex or simple they should be and how satisfied we are going to be with their robustness. Especially the regression analyses are not as robust as we'd wished but we think they still provide insights that can translate into policy recommendations.
+
+## Conclusion
+
+This analysis examined both individual and structural influences that potentially shape government spending on families across 1 European countries while utilizing CRONOS-3 and ESS data from the 10th and 11th wave. Three research questions lead our analysis, covering perceived access to family policies, differences between parents and non-parents, abd predictors of support for government spending.
+
+Consistent across all results is the importance of actively living with children. It is the most important driver of support for government family spending, suggesting that direct experience with family life shapes political demand for subsidies. Perceived access to family policies is not strongly differentiated between parents and non-parents, but is noticeably structured by gender, income, and country, while women and lower-income individuals show lower access.
+
+Regarding individual and structural predictors, conservative and religious value orientations are found to be culturally consistent predictors of family spending support. As a continuation of less relevance of climate change awareness, environmental attitudes show no meaningful association. Instead income plays a nuanced role, with middle-income households being less supportive than lower-income households, potentially reflecting differing perceptions of need and state dependency.
+
+Country-level differences are most likely absorbed by individual-level predictors as they aren't as predictive, with the notable exceptions of Finland and Czech Republic, whose lower support may reflect a normalization of family policy rather than opposition to it.
+
+Overall, the findings suggest that family spending enjoys broad but needs-driven support, shaped more by "active" family experience and cultural values than by policy access or environmental attitudes.
+
+## Appendices
+
+```{r}
+#| label: fig-access_by_country
+#| fig-cap: "Perceived access to childcare, parental leave and suitable housing by country (ages 25-40)"
+
+df_long <- dfmi_filtered_w4w_age |>
+  pivot_longer(
+    cols = starts_with("access_"),
+    names_to = "access_type",
+    values_to = "access_value"
+  )
+
+df_plot <- df_long |>
+  group_by(cntry, access_type, access_value) |>
+  summarise(
+    w = sum(w4weight, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  group_by(cntry, access_type) |>
+  mutate(
+    pct = w / sum(w)
+  )
+ggplot(df_plot, aes(x = cntry, y = pct, fill = access_value)) +
+  geom_col(position = "stack") +
+  facet_wrap(~ access_type) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    x = "Country",
+    y = "Weighted percentage",
+    fill = "Response"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+{{< pagebreak >}}
+
+```{r}
+## # Regression models on access
+#| label: tbl-regressions_access
+#| fig-cap: "OLS regression models for perceived access to childcare, parental leave and suitable housing (ages 25-40)"
+
+modelsummary(
+  list(
+    "Childcare (Simple)" = m1_childcare,
+    "Parental leave (Simple)" = m1_leave,
+    "Housing (Simple)" = m1_housing,
+    "Childcare (Complex)" = m2_childcare,
+    "Parental leave (Complex)" = m2_leave,
+    "Housing (Complex)" = m2_housing
+  ),
+  stars = TRUE,
+  output = "kableExtra"
+) |>
+  kable_styling(
+    font_size = 7,           # small font
+    latex_options = c(
+      "scale_down",          # scale to fit page
+      "rotate"               # rotate 90 degrees
+    )
+  )
+
+```
+
+{{< pagebreak >}}
+
+## References
